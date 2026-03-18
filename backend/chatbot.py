@@ -16,6 +16,9 @@ import asyncio
 import os
 import aiosqlite
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
+from langchain_core.tools import tool
+from langgraph.prebuilt import ToolNode, tools_condition
+from langchain_mcp_adapters.client import MultiServerMCPClient
 
 # load environment variables from .env (endpoint, key, deployment, version)
 load_dotenv()
@@ -34,55 +37,87 @@ llm = AzureChatOpenAI(
     azure_deployment=azure_deployment,
     api_version=api_version,
     # additional params like temperature, max_tokens are optional
+    temperature=0.1
 )
 
 class ChatState(TypedDict):
     messages: Annotated[list[BaseMessage], add_messages]
 
-async def chat_node(state: ChatState):
-    """Async chat node that calls the LLM asynchronously"""
-    messages = state['messages']
-    response = await llm.ainvoke(messages)
-    return {"messages": [response]}
+async def create_graph(tools):
 
-graph = StateGraph(ChatState)
-graph.add_node("chat_node", chat_node)
-graph.add_edge(START, "chat_node")
-graph.add_edge("chat_node", END)
+    llm_with_tools = llm.bind_tools(tools)
 
-# Initialize SQLite checkpointer for conversation persistence with async support
+    async def chat_node(state: ChatState):
+        """Async chat node that calls the LLM asynchronously"""
+        messages = state['messages']
+        response = await llm_with_tools.ainvoke(messages)
+        return {"messages": [response]}
+
+    graph = StateGraph(ChatState)
+    graph.add_node("chat_node", chat_node)
+    graph.add_node("tools", ToolNode(tools))
+
+    graph.add_edge(START, "chat_node")
+    graph.add_conditional_edges(
+        "chat_node",
+        tools_condition
+    )
+    graph.add_edge("tools", "chat_node")
+
+    return graph
+
+
 async def setup_async_graph():
-    # Now we can safely use 'await' because we are inside an async function
+    
+    # Initialize SQLite checkpointer for conversation persistence with async support
     conn = await aiosqlite.connect("checkpoints.sqlite")
     saver = AsyncSqliteSaver(conn=conn)
+
+    CLIENT_CONFIG = {
+       "run_node_test": {
+            "transport": "stdio",
+            "command": "python", 
+            "args": ["Q:\\mcp\\server.py"] 
+        }
+    }
+
+    # 1. Instantiate directly. No more 'async with'!
+    mcp_client = MultiServerMCPClient(CLIENT_CONFIG)
+    
+    # 2. Fetch tools. The client handles the connection temporarily under the hood.
+    tools = await mcp_client.get_tools()
     
     # Compile and return the chatbot
-    return graph.compile(checkpointer=saver)
+    builder = await create_graph(tools)
+    return builder.compile(checkpointer=saver)
 
+async def run_test():
+    print("Initializing Multi-Server MCP Client...")
 
-##------Test Backend Code------
-# async def run_test():
-#     print("Initializing async graph...")
-#     # 1. We must AWAIT the setup function to get the actual graph object
-#     chatbot = await setup_async_graph()
     
-#     print("Sending message to Azure (Streaming)...\n")
-#     print("AI: ", end="", flush=True) # Prepare the terminal line
-    
-#     # 2. Because we are streaming, we must iterate over the chunks using 'async for'
-#     async for chunk, metadata in chatbot.astream(
-#         {"messages": [HumanMessage(content="Hello from the graph!")]},
-#         config={"configurable": {"thread_id": "test"}},
-#         stream_mode="messages" # Corrected from stream="messages"
-#     ):
-#         # 3. Print the AI chunks to the terminal exactly as they arrive
-#         #if chunk.content and getattr(chunk, "type", "") == "ai":
-#         print(chunk.content, end="", flush=True)
+    try:
+        chatbot = await setup_async_graph()
+            
+        while True:
 
-#     print("\n\n[Stream finished successfully!]")
-#     await chatbot.checkpointer.conn.close()
+            user_input = input("\n You: ")
 
-# # 3. This is how you run an async function in a standalone Python script
-# if __name__ == "__main__":
-#     asyncio.run(run_test())
+            if user_input.strip().lower() in ["bye", "exit", "quit"]:
+                break
+
+            final_state = await chatbot.ainvoke(
+                {"messages": [HumanMessage(content=user_input)]},
+                config={"configurable": {"thread_id": "test_mdjcdjc87i8jdch654647554"}}
+            )
+
+            final_ai_text = final_state["messages"][-1]
+            print(f"AI: {final_ai_text}")
+
+        print("\n\n[Stream finished successfully!]")
+        
+    finally:
+        print("Database connection closed.")
+
+if __name__ == "__main__":
+    asyncio.run(run_test())
 

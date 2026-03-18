@@ -66,6 +66,7 @@ jsonschema-specifications==2025.9.1
 keyring==25.7.0
 langchain==1.2.11
 langchain-core==1.2.18
+langchain-mcp-adapters==0.2.2
 langchain-openai==1.1.11
 langgraph==1.1.0
 langgraph-checkpoint==4.0.1

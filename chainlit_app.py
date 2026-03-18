@@ -49,8 +49,8 @@ def oauth_callback(
 async def set_starters():
     return [
         cl.Starter(
-            label="Run CPU Tests",
-            message="Can you help me create a personalized morning routine that would help increase my productivity throughout the day? Start by asking me about my current habits and what activities energize me in the morning.",
+            label="Run Probation Test",
+            message="Run Probation Test",
             icon="/public/idea.svg",
         ),
 
