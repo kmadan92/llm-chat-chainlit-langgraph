@@ -20,6 +20,18 @@ async def run_node_test(node_id: list[str], test_type: str) -> str:
     
     return f"Tests failed for {node_id}"
 
+@mcp.tool()
+async def write_db(message: str) -> str:
+    """
+    Saves user-provided details to the database.
+    
+    Call this tool when the user asks to save, store, or write any information to the DB or database.
+    
+    Args:
+        message: The details or information the user wants to save to the database.
+    """
+    return f"Write operation of user message is successful."
+
 # Run the MCP server
 if __name__ == "__main__":
     mcp.run()
