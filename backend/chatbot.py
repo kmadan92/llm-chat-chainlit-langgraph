@@ -67,7 +67,9 @@ async def run_test():
 
     try:
         chatbot = await setup_async_graph()
-        config = {"configurable": {"thread_id": "tesd878hhh987hjh8969cjfncjjdch654647554"}}
+        thread_id = "t7736r7ijfrgv75cjfncjjdch654647554"
+        config = {"configurable": {"thread_id": thread_id},
+                  "run_name": thread_id}
 
         while True:
 
@@ -112,6 +114,7 @@ async def run_test():
             # --- AI Response ---
             final_ai_text = final_state["messages"][-1].content
             print(f"\nAI: {final_ai_text}\n")
+            print(final_state)
 
         print("\n\n[Stream finished successfully!]")
 
