@@ -1,6 +1,6 @@
 # Multi-Agent AI Platform with MCP Integration
 
-A production-ready, fully asynchronous **agentic AI platform** built with
+A production-ready, fully asynchronous **agentic AI platform or framework** built with
 **LangGraph**, **Chainlit**, and the **Model Context Protocol (MCP)**,
 powered by **OpenAI**.
 
