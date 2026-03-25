@@ -28,12 +28,13 @@ async def get_graph():
 
 # --- NEW: Real Google OAuth Authentication ---
 @cl.oauth_callback
-def oauth_callback(
+async def oauth_callback(
     provider_id: str,
     token: str,
     raw_user_data: dict[str, str],
     default_user: cl.User,
-):
+    id_token: str | None = None,
+) -> cl.User | None:
     # Chainlit automatically handles the Google login flow.
     # This function just confirms the login was successful and returns the user object.
     if provider_id == "google":
@@ -48,7 +49,7 @@ def oauth_callback(
 # ---------------------------------------------
 
 @cl.set_starters
-async def set_starters():
+async def set_starters(user: cl.User | None = None, app_language: str | None = None):
     return [
         cl.Starter(
             label="Run Probation Test",
@@ -93,73 +94,107 @@ async def on_chat_resume(thread):
 
 @cl.on_message
 async def main(message):
-    # extract text from chainlit message object (always coerce to str)
-
-
-    if hasattr(message, "content"):
-        user_text = message.content
-    else:
-        user_text = str(message)
-
-    #debug: print full object attributes
-    # print("received message text=", user_text)
-    # print("message attributes:", vars(message))
-
+    user_text = message.content if hasattr(message, "content") else str(message)
     thread_id = message.thread_id
     chatbot = cl.user_session.get("chatbot")
+    if chatbot is None:
+        await cl.Message(content="Session not ready. Please refresh and try again.").send()
+        return
+    config = {"configurable": {"thread_id": thread_id}, "run_name": thread_id}
 
-    # stream langgraph chatbot with the new human message
+    msg = cl.Message(content="")
+    await msg.send()
+
     try:
-        # Create an empty message to stream to
-        msg = cl.Message(content="")
-        await msg.send() 
-        
-        # Use astream() for async streaming, and fix the loop syntax
         async for chunk, metadata in chatbot.astream(
             {"messages": [HumanMessage(content=user_text)]},
-            config={"configurable": {"thread_id": thread_id}},
+            config=config,
             stream_mode="messages"
         ):
-
-            # --- DEBUGGING PRINT ---
-            # This will print the raw chunks to your terminal so you can see the data!
-            # print(f"DEBUG Chunk: {chunk.__class__.__name__} | Content: {chunk.content}")
-           
-            if chunk.content and "AIMessageChunk" in chunk.__class__.__name__:
-                await msg.stream_token(chunk.content)
-
-        # # Finalize the message
-        await msg.update()
-
-    except GraphInterrupt as e:
-        # HITL: write_db triggered an interrupt — show Approve / Reject buttons
-        interrupt_val = e.interrupts[0].value if e.interrupts else {}
-
-        action_res = await cl.AskActionMessage(
-            content=f"**Approval Required**\n\n{interrupt_val}",
-            actions=[
-                cl.Action(name="approve", payload={"value": "approve"}, label="✅ Approve"),
-                cl.Action(name="reject",  payload={"value": "reject"},  label="❌ Reject"),
-            ],
-        ).send()
-
-        decision = action_res["payload"]["value"] if action_res else "reject"
-
-        # Resume the graph and stream the final response
-        msg = cl.Message(content="")
-        await msg.send()
-        async for chunk, metadata in chatbot.astream(
-            Command(resume=decision),
-            config={"configurable": {"thread_id": thread_id}},
-            stream_mode="messages",
-        ):
             if chunk.content and "AIMessageChunk" in chunk.__class__.__name__:
                 await msg.stream_token(chunk.content)
         await msg.update()
+
+        # Check for HITL interrupt after streaming completes
+        snapshot = await chatbot.aget_state(config)
+        if snapshot.interrupts:
+            #print(snapshot)
+            await _handle_interrupt(chatbot, config, snapshot)
 
     except Exception as e:
-        reply_text = f"Error invoking chatbot: {e}"
         print("chatbot invocation error:", e)
-        await cl.Message(content=reply_text).send()
+        await cl.Message(content=f"Error invoking chatbot: {e}").send()
+
+
+async def _handle_interrupt(chatbot, config, snapshot):
+    """Show Approve / Edit / Reject UI and resume the graph with the user's decision."""
+    interrupt_val = snapshot.interrupts[0].value
+    action = interrupt_val["action_requests"][0]
+    allowed = interrupt_val["review_configs"][0]["allowed_decisions"]
+
+    action_name = action.get("name", "unknown")
+    description = action.get("description", "The AI wants to perform an action.")
+    args = action.get("args", {})
+
+    # Build buttons based on what is allowed for this tool
+    buttons = []
+    if "approve" in allowed:
+        buttons.append(cl.Action(name="approve", payload={"value": "approve"}, label="✅ Approve"))
+    if "edit" in allowed:
+        buttons.append(cl.Action(name="edit", payload={"value": "edit"}, label="✏️ Edit"))
+    if "reject" in allowed:
+        buttons.append(cl.Action(name="reject", payload={"value": "reject"}, label="❌ Reject"))
+
+    action_res = await cl.AskActionMessage(
+        content=(
+            f"**Approval Required**\n\n"
+            f"🔧 Tool: `{action_name}`\n"
+            f"📋 Args: `{args}`\n\n"
+        ),
+        actions=buttons,
+    ).send()
+
+    decision = action_res["payload"]["value"] if action_res else "reject"
+
+    if decision == "edit":
+        edit_res = await cl.AskUserMessage(
+            content=f"✏️ **Edit value for `{action_name}` in the text field below**\n\nCurrent value is: `{args}`\n\nEnter new value:",
+            timeout=120,
+        ).send()
+        new_message = (edit_res.get("output") or "").strip() if edit_res else args.get("message", "")
+        resume_decision = {
+            "type": "edit",
+            "edited_action": {
+                "name": action_name,
+                "args": {"message": new_message},
+            },
+        }
+    elif decision == "reject":
+        reason_res = await cl.AskUserMessage(
+            content="❌ Enter a reason for rejection (optional — press Enter to skip):",
+            timeout=60,
+        ).send()
+        resume_decision = {"type": "reject"}
+        if reason_res and (reason_res.get("output") or "").strip():
+            resume_decision["message"] = reason_res.get("output", "").strip()
+    else:
+        resume_decision = {"type": "approve"}
+
+    # Resume the graph and stream the continued response
+    msg = cl.Message(content="")
+    await msg.send()
+    async for chunk, metadata in chatbot.astream(
+        Command(resume={"decisions": [resume_decision]}),
+        config=config,
+        stream_mode="messages",
+    ):
+        if chunk.content and "AIMessageChunk" in chunk.__class__.__name__:
+            await msg.stream_token(chunk.content)
+    await msg.update()
+
+    # Handle chained interrupts (another tool may need approval in the same turn)
+    snapshot = await chatbot.aget_state(config)
+    if snapshot.interrupts:
+        await _handle_interrupt(chatbot, config, snapshot)
 
 

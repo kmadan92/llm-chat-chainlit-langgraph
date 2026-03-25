@@ -30,7 +30,7 @@ async def write_db(message: str) -> str:
     Args:
         message: The details or information the user wants to save to the database.
     """
-    return f"Write operation of user message is successful."
+    return f"Write operation of user message {message} is successful."
 
 # Run the MCP server
 if __name__ == "__main__":
