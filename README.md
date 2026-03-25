@@ -1,9 +1,15 @@
-# Async LangGraph & Chainlit Chatbot
+# Multi-Agent AI Platform with MCP Integration
 
-A fully asynchronous, stateful AI chatbot built with **LangGraph** and
-**Chainlit**, powered by **OpenAI**.
+A production-ready, fully asynchronous **agentic AI platform** built with
+**LangGraph**, **Chainlit**, and the **Model Context Protocol (MCP)**,
+powered by **OpenAI**.
 
-The application supports:
+Unlike a traditional chatbot, this platform runs a stateful LangGraph
+agent that can autonomously plan, call external tools via MCP, and
+pause for human review before executing sensitive operations — all
+through a polished web UI with Google authentication.
+
+The platform supports:
 
 -   Google OAuth authentication (with account picker + consent screen)
 -   Persistent chat history
@@ -42,10 +48,10 @@ allowing users to switch between chats while maintaining memory.
 
 Two independent databases are used:
 
-  Component     Database                   Purpose
-  ------------- -------------------------- ------------------------------
-  Chainlit UI   chainlit_ui_history.db     Chat history, threads, steps
-  LangGraph     checkpoints.sqlite         Conversation memory state
+| Component    | Database                  | Purpose                          |
+|--------------|---------------------------|----------------------------------|
+| Chainlit UI  | `chainlit_ui_history.db`  | Chat history, threads, steps     |
+| LangGraph    | `checkpoints.sqlite`      | Conversation memory / agent state |
 
 ## Other Tools
 
